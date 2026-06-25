@@ -88,14 +88,17 @@
     <div class="codesec">
       <div class="codehead">
         <span class="name">Live code</span>
-        <select id="exSel" style="width:auto;margin:0;padding:5px 8px;font-size:12px"><option value="">insert example…</option></select>
+        <div style="display:flex;gap:8px;align-items:center">
+          <select id="exSel" style="width:auto;margin:0;padding:5px 8px;font-size:12px"><option value="">insert example…</option></select>
+          <button class="primary" id="runCode" style="margin:0;padding:5px 14px">Run ▶</button>
+        </div>
       </div>
       <textarea id="codeArea" spellcheck="false"></textarea>
       <div class="codeErr" id="codeErr"></div>
       <p class="hint"><b>Commands:</b> <code>fd</code> <code>bk</code> <code>rt</code> <code>lt</code>
         <code>pu</code> <code>pd</code> <code>seth</code> <code>goto(x,y)</code> ·
         <code>repeat(n,i=&gt;{…})</code> · <code>poly(sides,len)</code> · plus JS <code>for</code>/<code>let</code>/<code>Math</code>.<br>
-        Moving a slider regenerates this code; editing the code redraws live (Cmd/Ctrl+Enter).</p>
+        Edits redraw when you pause typing, or hit Run / Cmd-Ctrl+Enter; invalid code keeps the last good picture and shows the error below. Moving a slider regenerates this code.</p>
     </div>
 
     <p class="hint">Every pattern is one continuous pen-down path, so the SVG is a single
@@ -312,11 +315,12 @@ function syncCodeFromSliders(){
 function wireCodeBox(){
   const ta=$("#codeArea"), ex=$("#exSel");
   EXAMPLES.forEach((e,i)=>{const o=document.createElement("option");o.value=i;o.textContent=e.name;ex.appendChild(o);});
-  const runNow=()=>{codeText=ta.value;redraw();};
-  ta.addEventListener('input',()=>{codeText=ta.value;clearTimeout(codeTimer);codeTimer=setTimeout(runNow,250);});
+  const runNow=()=>{clearTimeout(codeTimer);codeText=ta.value;redraw();};
+  ta.addEventListener('input',()=>{codeText=ta.value;clearTimeout(codeTimer);codeTimer=setTimeout(runNow,400);});
   ta.addEventListener('keydown',e=>{if((e.metaKey||e.ctrlKey)&&e.key==='Enter'){e.preventDefault();runNow();}});
+  $("#runCode").onclick=runNow;
   ex.addEventListener('change',e=>{ if(e.target.value==="")return;
-    codeText=EXAMPLES[+e.target.value].code; ta.value=codeText; e.target.value=""; redraw(); });
+    codeText=EXAMPLES[+e.target.value].code; ta.value=codeText; e.target.value=""; runNow(); });
 }
 
 sel.addEventListener('change',()=>{current=sel.value;buildControls();syncCodeFromSliders();redraw();});
@@ -363,9 +367,8 @@ function fitCanvas(){const size=Math.min(cv.parentElement.clientWidth-48,cv.pare
   const dpr=window.devicePixelRatio||1;cv.style.width=cv.style.height=size+"px";
   cv.width=cv.height=Math.round(size*dpr);ctx.setTransform(dpr,0,0,dpr,0,0);return size;}
 
-let lastSeg=[];
-function redraw(reveal){
-  const seg=lastSeg=run();
+let lastSeg=[];   // last successfully-rendered path (kept on screen when new code is invalid)
+function renderSeg(seg,reveal){
   const size=fitCanvas(), pad=28;
   const bb=bbox(seg), sc=Math.min((size-2*pad)/bb.w,(size-2*pad)/bb.h);
   const ox=(size-bb.w*sc)/2-bb.minX*sc, oy=(size-bb.h*sc)/2-bb.minY*sc;
@@ -376,18 +379,29 @@ function redraw(reveal){
   for(let i=0;i<n;i++){const s=seg[i];
     ctx.moveTo(s[0]*sc+ox,s[1]*sc+oy);ctx.lineTo(s[2]*sc+ox,s[3]*sc+oy);}
   ctx.stroke();
+}
+function redraw(){
+  const seg=run();                      // executes the code box; sets codeError on failure
+  if(codeError || seg.length===0){      // half-typed / invalid / empty: keep the last good picture
+    showCodeErr();
+    return;
+  }
+  lastSeg=seg;
+  renderSeg(seg);
   $("#statSeg").textContent=seg.length.toLocaleString();
   $("#statLen").textContent=Math.round(pathLength(seg)).toLocaleString()+" steps";
-  showCodeErr();
+  showCodeErr();                        // clears the error line
 }
 
 let anim=null;
 function animate(){
   if(anim){cancelAnimationFrame(anim);anim=null;$("#animate").textContent="▶ Animate draw";redraw();return;}
+  redraw();                               // make sure lastSeg reflects the current good code
+  const seg=lastSeg, total=seg.length;
+  if(!total)return;
   $("#animate").textContent="⏹ Stop";
-  const total=lastSeg.length||run().length;let shown=0;
-  const per=Math.max(1,Math.round(total/120));
-  const tick=()=>{shown+=per;redraw(Math.min(shown,total));
+  let shown=0; const per=Math.max(1,Math.round(total/120));
+  const tick=()=>{shown+=per;renderSeg(seg,Math.min(shown,total));
     if(shown<total)anim=requestAnimationFrame(tick);
     else{anim=null;$("#animate").textContent="▶ Animate draw";}};
   tick();
