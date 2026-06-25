@@ -12,7 +12,7 @@
   *{box-sizing:border-box}
   html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);
     font:14px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
-  .app{display:grid;grid-template-columns:320px 1fr;height:100vh}
+  .app{display:grid;grid-template-columns:340px 1fr;height:100vh}
   /* ---- sidebar ---- */
   .side{background:var(--panel);border-right:1px solid var(--line);
     padding:16px;overflow-y:auto}
@@ -40,24 +40,27 @@
     border-top:1px solid var(--line);padding-top:10px;margin-top:4px}
   .hint{font-size:11px;color:var(--muted);margin-top:14px;line-height:1.5}
   code{background:var(--panel2);padding:1px 5px;border-radius:4px;font-size:12px}
-  textarea#codeArea{width:100%;min-height:220px;background:#0c0e13;color:#e8eaed;
+  /* ---- live code box ---- */
+  .codesec{margin-top:18px;border-top:1px solid var(--line);padding-top:14px}
+  .codehead{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:8px}
+  .codehead .name{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
+  textarea#codeArea{width:100%;min-height:240px;background:#0c0e13;color:#e8eaed;
     border:1px solid var(--line);border-radius:8px;padding:10px;resize:vertical;tab-size:2;
     font:13px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace}
   textarea#codeArea:focus{outline:none;border-color:var(--accent)}
-  .codeErr{color:#ff7a7a;min-height:16px;margin:-4px 0 10px;white-space:pre-wrap;
+  .codeErr{color:#ff7a7a;min-height:16px;margin:6px 0 0;white-space:pre-wrap;
     font:12px/1.4 ui-monospace,Menlo,monospace}
   /* ---- stage ---- */
   .stage{position:relative;display:flex;align-items:center;justify-content:center;padding:24px}
   canvas{background:#fbfbfd;border-radius:12px;box-shadow:0 10px 40px rgba(0,0,0,.45);
     max-width:100%;max-height:100%}
-  .toolbar{position:absolute;top:16px;right:16px;display:flex;gap:8px}
 </style>
 </head>
 <body>
 <div class="app">
   <aside class="side">
     <h1>Turtle Geometry Playground</h1>
-    <p class="sub">Live turtle graphics. Drag a slider, watch it redraw.</p>
+    <p class="sub">Move the sliders or edit the code below. Either one redraws the same turtle.</p>
 
     <div class="field"><div class="name" style="margin-bottom:6px">Pattern</div>
       <select id="pattern"></select>
@@ -82,9 +85,21 @@
     <div class="stat"><span>Segments</span><span id="statSeg">–</span></div>
     <div class="stat"><span>Path length</span><span id="statLen">–</span></div>
 
+    <div class="codesec">
+      <div class="codehead">
+        <span class="name">Live code</span>
+        <select id="exSel" style="width:auto;margin:0;padding:5px 8px;font-size:12px"><option value="">insert example…</option></select>
+      </div>
+      <textarea id="codeArea" spellcheck="false"></textarea>
+      <div class="codeErr" id="codeErr"></div>
+      <p class="hint"><b>Commands:</b> <code>fd</code> <code>bk</code> <code>rt</code> <code>lt</code>
+        <code>pu</code> <code>pd</code> <code>seth</code> <code>goto(x,y)</code> ·
+        <code>repeat(n,i=&gt;{…})</code> · <code>poly(sides,len)</code> · plus JS <code>for</code>/<code>let</code>/<code>Math</code>.<br>
+        Moving a slider regenerates this code; editing the code redraws live (Cmd/Ctrl+Enter).</p>
+    </div>
+
     <p class="hint">Every pattern is one continuous pen-down path, so the SVG is a single
-      running-stitch line: drop it into your <code>svg-to-embroidery</code> pipeline.<br><br>
-      Default pattern reproduces your Turtlestitch blocks: <code>repeat 18 · side 10→300 step 10 · turn 170°</code>.</p>
+      running-stitch line: drop it into your <code>svg-to-embroidery</code> pipeline.</p>
   </aside>
 
   <main class="stage">
@@ -106,7 +121,9 @@ class Turtle{
 }
 
 /* ----------------------------------------------------------------------------
-   Patterns. Each has params (with sane ranges) and a draw(turtle, p) routine.
+   Patterns. Each has slider params and a code(p) that emits the equivalent
+   turtle program as text. The code box is the single source of truth for what
+   gets drawn — sliders simply rewrite that code.
 ---------------------------------------------------------------------------- */
 const PATTERNS = {
   inspiral:{
@@ -119,8 +136,12 @@ const PATTERNS = {
       {key:"step",label:"side step",min:1,max:60,step:1,value:10,int:true},
       {key:"angle",label:"turn °",min:1,max:359,step:0.5,value:170},
     ],
-    draw(t,p){for(let r=0;r<p.repeats;r++)
-      for(let s=p.start;s<=p.end;s+=p.step){t.fd(s);t.rt(p.angle);}}
+    code:p=>`// Inspiral stars
+for (let r = 0; r < ${p.repeats}; r++)
+  for (let side = ${p.start}; side <= ${p.end}; side += ${p.step}) {
+    fd(side);
+    rt(${p.angle});
+  }`
   },
   polyspiral:{
     name:"Polyspiral",
@@ -131,7 +152,13 @@ const PATTERNS = {
       {key:"inc",label:"grow by",min:0,max:5,step:0.05,value:0.6},
       {key:"angle",label:"turn °",min:1,max:359,step:0.1,value:89.5},
     ],
-    draw(t,p){let L=p.start;for(let i=0;i<p.count;i++){t.fd(L);t.rt(p.angle);L+=p.inc;}}
+    code:p=>`// Polyspiral
+let len = ${p.start};
+for (let i = 0; i < ${p.count}; i++) {
+  fd(len);
+  rt(${p.angle});
+  len += ${p.inc};
+}`
   },
   spirolateral:{
     name:"Spirolateral",
@@ -142,8 +169,12 @@ const PATTERNS = {
       {key:"angle",label:"turn °",min:1,max:359,step:0.1,value:115},
       {key:"reps",label:"repeats",min:1,max:60,step:1,value:24,int:true},
     ],
-    draw(t,p){for(let r=0;r<p.reps;r++)
-      for(let i=1;i<=p.order;i++){t.fd(i*p.unit);t.rt(p.angle);}}
+    code:p=>`// Spirolateral
+for (let r = 0; r < ${p.reps}; r++)
+  for (let i = 1; i <= ${p.order}; i++) {
+    fd(i * ${p.unit});
+    rt(${p.angle});
+  }`
   },
   star:{
     name:"Star polygon {n/k}",
@@ -154,10 +185,15 @@ const PATTERNS = {
       {key:"size",label:"side len",min:10,max:300,step:1,value:120,int:true},
       {key:"layers",label:"layers",min:1,max:12,step:1,value:1,int:true},
     ],
-    draw(t,p){const a=360*p.skip/p.points;
-      for(let L=0;L<p.layers;L++){
-        for(let i=0;i<p.points;i++){t.fd(p.size-L*8);t.rt(a);}
-        t.rt(360/p.points/p.layers);}}
+    code:p=>`// Star polygon {${p.points}/${p.skip}}
+const a = 360 * ${p.skip} / ${p.points};
+for (let L = 0; L < ${p.layers}; L++) {
+  for (let i = 0; i < ${p.points}; i++) {
+    fd(${p.size} - L * 8);
+    rt(a);
+  }
+  rt(360 / ${p.points} / ${p.layers});
+}`
   },
   petals:{
     name:"Flower of polygons",
@@ -167,9 +203,11 @@ const PATTERNS = {
       {key:"sides",label:"polygon sides",min:3,max:24,step:1,value:4,int:true},
       {key:"size",label:"side len",min:10,max:200,step:1,value:90,int:true},
     ],
-    draw(t,p){for(let i=0;i<p.petals;i++){
-      for(let s=0;s<p.sides;s++){t.fd(p.size);t.rt(360/p.sides);}
-      t.rt(360/p.petals);}}
+    code:p=>`// Flower of polygons
+for (let i = 0; i < ${p.petals}; i++) {
+  poly(${p.sides}, ${p.size});
+  rt(360 / ${p.petals});
+}`
   },
   rose:{
     name:"Rose / hypotrochoid",
@@ -180,49 +218,22 @@ const PATTERNS = {
       {key:"wobble",label:"wobble",min:0,max:1,step:0.01,value:0},
       {key:"steps",label:"smoothness",min:200,max:3000,step:10,value:1440,int:true},
     ],
-    draw(t,p){t.up();let first=true;
-      for(let i=0;i<=p.steps;i++){const th=i/p.steps*Math.PI*2*p.k;
-        const r=p.size*(Math.cos(p.k*th)+p.wobble*Math.cos(3*th));
-        const x=r*Math.cos(th),y=r*Math.sin(th);
-        if(first){t.x=x;t.y=y;t.down();first=false;}
-        else t.seg.push([t.x,t.y,x,y]),t.x=x,t.y=y;}}
-  },
-  code:{
-    name:"✎ Write your own code",
-    desc:"Type a turtle program; it runs live. Command list is below the editor.",
-    code:true, params:[],
+    code:p=>`// Rose  r = cos(k·θ)
+const k = ${p.k}, R = ${p.size}, wob = ${p.wobble}, steps = ${p.steps};
+pu();
+for (let i = 0; i <= steps; i++) {
+  const th = i / steps * Math.PI * 2 * k;
+  const r = R * (Math.cos(k * th) + wob * Math.cos(3 * th));
+  goto(r * Math.cos(th), r * Math.sin(th));
+  pd();
+}`
   },
 };
 
 const PALETTE = ["#1b3bff","#e23b3b","#1b9e4b","#7a3bd6","#0f1115","#ff8c1a"];
 
-/* ----------------------------------------------------------------------------
-   Code mode: starter programs you can load and edit
----------------------------------------------------------------------------- */
+/* Bonus programs that go beyond the sliders (insert into the code box) */
 const EXAMPLES = [
-  {name:"Spiral of squares", code:
-`for (let i = 0; i < 36; i++) {
-  poly(4, 80);
-  rt(10);
-}`},
-  {name:"Inspiral stars (as code)", code:
-`for (let r = 0; r < 18; r++)
-  for (let side = 10; side <= 300; side += 10) {
-    fd(side);
-    rt(170);
-  }`},
-  {name:"Growing polyspiral", code:
-`let len = 2;
-for (let i = 0; i < 300; i++) {
-  fd(len);
-  rt(91);
-  len += 0.7;
-}`},
-  {name:"Starburst ring", code:
-`repeat(36, () => {
-  repeat(5, () => { fd(150); rt(144); });
-  rt(10);
-});`},
   {name:"Recursive tree", code:
 `function tree(len, depth) {
   if (depth === 0) return;
@@ -233,8 +244,19 @@ for (let i = 0; i < 300; i++) {
   pu(); bk(len); pd();
 }
 tree(120, 10);`},
+  {name:"Starburst ring", code:
+`repeat(36, () => {
+  repeat(5, () => { fd(150); rt(144); });
+  rt(10);
+});`},
+  {name:"Spiral of squares", code:
+`for (let i = 0; i < 36; i++) {
+  poly(4, 80);
+  rt(10);
+}`},
 ];
-let codeText = EXAMPLES[0].code;
+
+let codeText = "";
 let codeError = "";
 let codeTimer = null;
 
@@ -262,7 +284,6 @@ function buildSwatches(){
 function buildControls(){
   ctrls.innerHTML="";
   desc.textContent=PATTERNS[current].desc;
-  if(PATTERNS[current].code){buildCodeUI();return;}
   PATTERNS[current].params.forEach(p=>{
     const v=state[current][p.key];
     const lab=document.createElement("label");lab.className="field";
@@ -271,63 +292,62 @@ function buildControls(){
       <input type="range" min="${p.min}" max="${p.max}" step="${p.step}" value="${v}">`;
     const num=lab.querySelector('input[type=number]'), rng=lab.querySelector('input[type=range]');
     const set=val=>{let n=parseFloat(val);if(isNaN(n))return;if(p.int)n=Math.round(n);
-      n=Math.min(p.max,Math.max(p.min,n));state[current][p.key]=n;num.value=n;rng.value=n;redraw();};
+      n=Math.min(p.max,Math.max(p.min,n));state[current][p.key]=n;num.value=n;rng.value=n;
+      syncCodeFromSliders();redraw();};
     num.addEventListener('input',e=>set(e.target.value));
     rng.addEventListener('input',e=>set(e.target.value));
     ctrls.appendChild(lab);
   });
 }
 
-function buildCodeUI(){
-  const opts=EXAMPLES.map((e,i)=>`<option value="${i}">${e.name}</option>`).join("");
-  ctrls.innerHTML=`
-    <label class="field"><div class="row"><span class="name">Your turtle program</span></div>
-      <textarea id="codeArea" spellcheck="false"></textarea></label>
-    <div class="btns">
-      <button class="primary" id="runCode">Run ▶</button>
-      <select id="exSel" style="flex:1;min-width:140px;margin:0"><option value="">Load example…</option>${opts}</select>
-    </div>
-    <div class="codeErr" id="codeErr"></div>
-    <div class="hint"><b>Commands:</b> <code>fd(d)</code> <code>bk(d)</code> <code>rt(°)</code> <code>lt(°)</code>
-      <code>pu()</code> <code>pd()</code> <code>seth(°)</code> <code>home()</code> ·
-      <code>repeat(n, i=&gt;{…})</code> · <code>poly(sides,len)</code><br>
-      Plus normal JS: <code>for</code>, <code>let</code>, <code>function</code>, <code>Math</code>.
-      Press Cmd/Ctrl+Enter to run. Avoid infinite loops.</div>`;
-  const ta=ctrls.querySelector('#codeArea'); ta.value=codeText;
-  const runNow=()=>{codeText=ta.value;redraw();};
-  ta.addEventListener('input',()=>{codeText=ta.value;clearTimeout(codeTimer);codeTimer=setTimeout(runNow,300);});
-  ta.addEventListener('keydown',e=>{if((e.metaKey||e.ctrlKey)&&e.key==='Enter'){e.preventDefault();runNow();}});
-  ctrls.querySelector('#runCode').onclick=runNow;
-  ctrls.querySelector('#exSel').addEventListener('change',e=>{
-    if(e.target.value==="")return;
-    codeText=EXAMPLES[+e.target.value].code; ta.value=codeText; e.target.value=""; runNow();});
-}
-function showCodeErr(){const el=document.getElementById('codeErr');if(el)el.textContent=codeError?("⚠ "+codeError):"";}
+function showCodeErr(){const el=$("#codeErr");if(el)el.textContent=codeError?("⚠ "+codeError):"";}
 
-sel.addEventListener('change',()=>{current=sel.value;buildControls();redraw();});
+// Regenerate the code box from the current preset + slider values
+function syncCodeFromSliders(){
+  codeText=PATTERNS[current].code(state[current]);
+  const ta=$("#codeArea"); if(ta)ta.value=codeText;
+}
+
+// Wire the always-visible code editor (runs once at startup)
+function wireCodeBox(){
+  const ta=$("#codeArea"), ex=$("#exSel");
+  EXAMPLES.forEach((e,i)=>{const o=document.createElement("option");o.value=i;o.textContent=e.name;ex.appendChild(o);});
+  const runNow=()=>{codeText=ta.value;redraw();};
+  ta.addEventListener('input',()=>{codeText=ta.value;clearTimeout(codeTimer);codeTimer=setTimeout(runNow,250);});
+  ta.addEventListener('keydown',e=>{if((e.metaKey||e.ctrlKey)&&e.key==='Enter'){e.preventDefault();runNow();}});
+  ex.addEventListener('change',e=>{ if(e.target.value==="")return;
+    codeText=EXAMPLES[+e.target.value].code; ta.value=codeText; e.target.value=""; redraw(); });
+}
+
+sel.addEventListener('change',()=>{current=sel.value;buildControls();syncCodeFromSliders();redraw();});
 
 /* ----------------------------------------------------------------------------
-   Geometry helpers
+   Turtle API exposed to code, + run the code box
 ---------------------------------------------------------------------------- */
-function run(){const t=new Turtle();
-  if(PATTERNS[current].code)runCode(t,codeText);
-  else PATTERNS[current].draw(t,state[current]);
-  return t.seg;}
-
-function makeAPI(t){return {
-  fd:d=>t.fd(d), forward:d=>t.fd(d), bk:d=>t.fd(-d), back:d=>t.fd(-d),
-  rt:a=>t.rt(a), right:a=>t.rt(a), lt:a=>t.lt(a), left:a=>t.lt(a),
-  pu:()=>t.up(), penup:()=>t.up(), pd:()=>t.down(), pendown:()=>t.down(),
-  seth:h=>{t.h=h;}, setheading:h=>{t.h=h;}, home:()=>{t.x=0;t.y=0;t.h=0;},
-  repeat:(n,f)=>{for(let i=0;i<n;i++)f(i);},
-  poly:(s,l)=>{for(let i=0;i<s;i++){t.fd(l);t.rt(360/s);}},
-};}
+function makeAPI(t){
+  const lineTo=(x,y)=>{ if(t.seg.length>200000)throw new Error("Over 200,000 segments — reduce your loops.");
+    if(t.pen)t.seg.push([t.x,t.y,x,y]); t.x=x; t.y=y; };
+  return {
+    fd:d=>t.fd(d), forward:d=>t.fd(d), bk:d=>t.fd(-d), back:d=>t.fd(-d),
+    rt:a=>t.rt(a), right:a=>t.rt(a), lt:a=>t.lt(a), left:a=>t.lt(a),
+    pu:()=>t.up(), penup:()=>t.up(), pd:()=>t.down(), pendown:()=>t.down(),
+    seth:h=>{t.h=h;}, setheading:h=>{t.h=h;}, home:()=>{t.x=0;t.y=0;t.h=0;},
+    goto:lineTo, setxy:lineTo,
+    repeat:(n,f)=>{for(let i=0;i<n;i++)f(i);},
+    poly:(s,l)=>{for(let i=0;i<s;i++){t.fd(l);t.rt(360/s);}},
+  };
+}
 function runCode(t,src){codeError="";
   const api=makeAPI(t);
   try{ (new Function(...Object.keys(api),src))(...Object.values(api)); }
   catch(e){ codeError=String(e&&e.message||e); }
 }
 
+function run(){const t=new Turtle();runCode(t,codeText);return t.seg;}
+
+/* ----------------------------------------------------------------------------
+   Geometry helpers
+---------------------------------------------------------------------------- */
 function bbox(seg){let a=1e9,b=1e9,c=-1e9,d=-1e9;
   for(const s of seg){a=Math.min(a,s[0],s[2]);b=Math.min(b,s[1],s[3]);
     c=Math.max(c,s[0],s[2]);d=Math.max(d,s[1],s[3]);}
@@ -350,8 +370,7 @@ function redraw(reveal){
   const bb=bbox(seg), sc=Math.min((size-2*pad)/bb.w,(size-2*pad)/bb.h);
   const ox=(size-bb.w*sc)/2-bb.minX*sc, oy=(size-bb.h*sc)/2-bb.minY*sc;
   ctx.clearRect(0,0,size,size);
-  ctx.lineWidth=Math.max(0.6,1.1/Math.sqrt(sc>0?sc:1)*Math.sqrt(sc));ctx.lineWidth=1.1;
-  ctx.lineCap="round";ctx.lineJoin="round";ctx.strokeStyle=color;
+  ctx.lineWidth=1.1;ctx.lineCap="round";ctx.lineJoin="round";ctx.strokeStyle=color;
   const n = reveal==null?seg.length:reveal;
   ctx.beginPath();
   for(let i=0;i<n;i++){const s=seg[i];
@@ -359,7 +378,7 @@ function redraw(reveal){
   ctx.stroke();
   $("#statSeg").textContent=seg.length.toLocaleString();
   $("#statLen").textContent=Math.round(pathLength(seg)).toLocaleString()+" steps";
-  if(PATTERNS[current].code)showCodeErr();
+  showCodeErr();
 }
 
 let anim=null;
@@ -398,15 +417,15 @@ $("#savePng").onclick=()=>{redraw();cv.toBlob(b=>download(current+".png",b,"imag
 ---------------------------------------------------------------------------- */
 $("#animate").onclick=animate;
 $("#reset").onclick=()=>{
-  if(PATTERNS[current].code){codeText=EXAMPLES[0].code;buildControls();redraw();return;}
-  PATTERNS[current].params.forEach(p=>state[current][p.key]=p.value);buildControls();redraw();};
+  PATTERNS[current].params.forEach(p=>state[current][p.key]=p.value);
+  buildControls();syncCodeFromSliders();redraw();};
 $("#surprise").onclick=()=>{PATTERNS[current].params.forEach(p=>{
   const r=p.min+Math.random()*(p.max-p.min);state[current][p.key]=p.int?Math.round(r):Math.round(r*10)/10;});
-  buildControls();redraw();};
+  buildControls();syncCodeFromSliders();redraw();};
 
 window.addEventListener('resize',()=>redraw());
 
-buildSwatches();buildControls();redraw();
+buildSwatches();buildControls();wireCodeBox();syncCodeFromSliders();redraw();
 </script>
 </body>
 </html>
