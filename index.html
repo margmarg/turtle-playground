@@ -40,6 +40,12 @@
     border-top:1px solid var(--line);padding-top:10px;margin-top:4px}
   .hint{font-size:11px;color:var(--muted);margin-top:14px;line-height:1.5}
   code{background:var(--panel2);padding:1px 5px;border-radius:4px;font-size:12px}
+  textarea#codeArea{width:100%;min-height:220px;background:#0c0e13;color:#e8eaed;
+    border:1px solid var(--line);border-radius:8px;padding:10px;resize:vertical;tab-size:2;
+    font:13px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace}
+  textarea#codeArea:focus{outline:none;border-color:var(--accent)}
+  .codeErr{color:#ff7a7a;min-height:16px;margin:-4px 0 10px;white-space:pre-wrap;
+    font:12px/1.4 ui-monospace,Menlo,monospace}
   /* ---- stage ---- */
   .stage{position:relative;display:flex;align-items:center;justify-content:center;padding:24px}
   canvas{background:#fbfbfd;border-radius:12px;box-shadow:0 10px 40px rgba(0,0,0,.45);
@@ -92,7 +98,8 @@
 ---------------------------------------------------------------------------- */
 class Turtle{
   constructor(){this.x=0;this.y=0;this.h=0;this.pen=true;this.seg=[];}
-  fd(d){const r=this.h*Math.PI/180,nx=this.x+d*Math.sin(r),ny=this.y-d*Math.cos(r);
+  fd(d){if(this.seg.length>200000)throw new Error("Over 200,000 segments — reduce your loops.");
+    const r=this.h*Math.PI/180,nx=this.x+d*Math.sin(r),ny=this.y-d*Math.cos(r);
     if(this.pen)this.seg.push([this.x,this.y,nx,ny]);this.x=nx;this.y=ny;}
   rt(a){this.h+=a;} lt(a){this.h-=a;}
   up(){this.pen=false;} down(){this.pen=true;}
@@ -180,9 +187,56 @@ const PATTERNS = {
         if(first){t.x=x;t.y=y;t.down();first=false;}
         else t.seg.push([t.x,t.y,x,y]),t.x=x,t.y=y;}}
   },
+  code:{
+    name:"✎ Write your own code",
+    desc:"Type a turtle program; it runs live. Command list is below the editor.",
+    code:true, params:[],
+  },
 };
 
 const PALETTE = ["#1b3bff","#e23b3b","#1b9e4b","#7a3bd6","#0f1115","#ff8c1a"];
+
+/* ----------------------------------------------------------------------------
+   Code mode: starter programs you can load and edit
+---------------------------------------------------------------------------- */
+const EXAMPLES = [
+  {name:"Spiral of squares", code:
+`for (let i = 0; i < 36; i++) {
+  poly(4, 80);
+  rt(10);
+}`},
+  {name:"Inspiral stars (as code)", code:
+`for (let r = 0; r < 18; r++)
+  for (let side = 10; side <= 300; side += 10) {
+    fd(side);
+    rt(170);
+  }`},
+  {name:"Growing polyspiral", code:
+`let len = 2;
+for (let i = 0; i < 300; i++) {
+  fd(len);
+  rt(91);
+  len += 0.7;
+}`},
+  {name:"Starburst ring", code:
+`repeat(36, () => {
+  repeat(5, () => { fd(150); rt(144); });
+  rt(10);
+});`},
+  {name:"Recursive tree", code:
+`function tree(len, depth) {
+  if (depth === 0) return;
+  fd(len);
+  rt(28); tree(len * 0.72, depth - 1);
+  lt(56); tree(len * 0.72, depth - 1);
+  rt(28);
+  pu(); bk(len); pd();
+}
+tree(120, 10);`},
+];
+let codeText = EXAMPLES[0].code;
+let codeError = "";
+let codeTimer = null;
 
 /* ----------------------------------------------------------------------------
    State + UI wiring
@@ -208,6 +262,7 @@ function buildSwatches(){
 function buildControls(){
   ctrls.innerHTML="";
   desc.textContent=PATTERNS[current].desc;
+  if(PATTERNS[current].code){buildCodeUI();return;}
   PATTERNS[current].params.forEach(p=>{
     const v=state[current][p.key];
     const lab=document.createElement("label");lab.className="field";
@@ -223,12 +278,55 @@ function buildControls(){
   });
 }
 
+function buildCodeUI(){
+  const opts=EXAMPLES.map((e,i)=>`<option value="${i}">${e.name}</option>`).join("");
+  ctrls.innerHTML=`
+    <label class="field"><div class="row"><span class="name">Your turtle program</span></div>
+      <textarea id="codeArea" spellcheck="false"></textarea></label>
+    <div class="btns">
+      <button class="primary" id="runCode">Run ▶</button>
+      <select id="exSel" style="flex:1;min-width:140px;margin:0"><option value="">Load example…</option>${opts}</select>
+    </div>
+    <div class="codeErr" id="codeErr"></div>
+    <div class="hint"><b>Commands:</b> <code>fd(d)</code> <code>bk(d)</code> <code>rt(°)</code> <code>lt(°)</code>
+      <code>pu()</code> <code>pd()</code> <code>seth(°)</code> <code>home()</code> ·
+      <code>repeat(n, i=&gt;{…})</code> · <code>poly(sides,len)</code><br>
+      Plus normal JS: <code>for</code>, <code>let</code>, <code>function</code>, <code>Math</code>.
+      Press Cmd/Ctrl+Enter to run. Avoid infinite loops.</div>`;
+  const ta=ctrls.querySelector('#codeArea'); ta.value=codeText;
+  const runNow=()=>{codeText=ta.value;redraw();};
+  ta.addEventListener('input',()=>{codeText=ta.value;clearTimeout(codeTimer);codeTimer=setTimeout(runNow,300);});
+  ta.addEventListener('keydown',e=>{if((e.metaKey||e.ctrlKey)&&e.key==='Enter'){e.preventDefault();runNow();}});
+  ctrls.querySelector('#runCode').onclick=runNow;
+  ctrls.querySelector('#exSel').addEventListener('change',e=>{
+    if(e.target.value==="")return;
+    codeText=EXAMPLES[+e.target.value].code; ta.value=codeText; e.target.value=""; runNow();});
+}
+function showCodeErr(){const el=document.getElementById('codeErr');if(el)el.textContent=codeError?("⚠ "+codeError):"";}
+
 sel.addEventListener('change',()=>{current=sel.value;buildControls();redraw();});
 
 /* ----------------------------------------------------------------------------
    Geometry helpers
 ---------------------------------------------------------------------------- */
-function run(){const t=new Turtle();PATTERNS[current].draw(t,state[current]);return t.seg;}
+function run(){const t=new Turtle();
+  if(PATTERNS[current].code)runCode(t,codeText);
+  else PATTERNS[current].draw(t,state[current]);
+  return t.seg;}
+
+function makeAPI(t){return {
+  fd:d=>t.fd(d), forward:d=>t.fd(d), bk:d=>t.fd(-d), back:d=>t.fd(-d),
+  rt:a=>t.rt(a), right:a=>t.rt(a), lt:a=>t.lt(a), left:a=>t.lt(a),
+  pu:()=>t.up(), penup:()=>t.up(), pd:()=>t.down(), pendown:()=>t.down(),
+  seth:h=>{t.h=h;}, setheading:h=>{t.h=h;}, home:()=>{t.x=0;t.y=0;t.h=0;},
+  repeat:(n,f)=>{for(let i=0;i<n;i++)f(i);},
+  poly:(s,l)=>{for(let i=0;i<s;i++){t.fd(l);t.rt(360/s);}},
+};}
+function runCode(t,src){codeError="";
+  const api=makeAPI(t);
+  try{ (new Function(...Object.keys(api),src))(...Object.values(api)); }
+  catch(e){ codeError=String(e&&e.message||e); }
+}
 
 function bbox(seg){let a=1e9,b=1e9,c=-1e9,d=-1e9;
   for(const s of seg){a=Math.min(a,s[0],s[2]);b=Math.min(b,s[1],s[3]);
@@ -261,6 +359,7 @@ function redraw(reveal){
   ctx.stroke();
   $("#statSeg").textContent=seg.length.toLocaleString();
   $("#statLen").textContent=Math.round(pathLength(seg)).toLocaleString()+" steps";
+  if(PATTERNS[current].code)showCodeErr();
 }
 
 let anim=null;
@@ -298,7 +397,9 @@ $("#savePng").onclick=()=>{redraw();cv.toBlob(b=>download(current+".png",b,"imag
    Buttons
 ---------------------------------------------------------------------------- */
 $("#animate").onclick=animate;
-$("#reset").onclick=()=>{PATTERNS[current].params.forEach(p=>state[current][p.key]=p.value);buildControls();redraw();};
+$("#reset").onclick=()=>{
+  if(PATTERNS[current].code){codeText=EXAMPLES[0].code;buildControls();redraw();return;}
+  PATTERNS[current].params.forEach(p=>state[current][p.key]=p.value);buildControls();redraw();};
 $("#surprise").onclick=()=>{PATTERNS[current].params.forEach(p=>{
   const r=p.min+Math.random()*(p.max-p.min);state[current][p.key]=p.int?Math.round(r):Math.round(r*10)/10;});
   buildControls();redraw();};
