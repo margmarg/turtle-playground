@@ -44,6 +44,9 @@
   .codesec{margin-top:18px;border-top:1px solid var(--line);padding-top:14px}
   .codehead{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:8px}
   .codehead .name{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
+  .seg{display:inline-flex;border:1px solid var(--line);border-radius:7px;overflow:hidden}
+  .seg button{border:0;border-radius:0;margin:0;padding:4px 10px;font-size:12px;background:var(--panel2);color:var(--muted);cursor:pointer}
+  .seg button.on{background:var(--accent);color:#06122b;font-weight:600}
   textarea#codeArea{width:100%;min-height:240px;background:#0c0e13;color:#e8eaed;
     border:1px solid var(--line);border-radius:8px;padding:10px;resize:vertical;tab-size:2;
     font:13px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace}
@@ -60,7 +63,7 @@
 <div class="app">
   <aside class="side">
     <h1>Turtle Geometry Playground</h1>
-    <p class="sub">Move the sliders or edit the code below. Either one redraws the same turtle.</p>
+    <p class="sub">Move the sliders or write turtle code (Logo or JavaScript) below. Either one redraws the same turtle.</p>
 
     <div class="field"><div class="name" style="margin-bottom:6px">Pattern</div>
       <select id="pattern"></select>
@@ -87,7 +90,13 @@
 
     <div class="codesec">
       <div class="codehead">
-        <span class="name">Live code</span>
+        <div style="display:flex;gap:10px;align-items:center">
+          <span class="name">Live code</span>
+          <span class="seg" id="langToggle">
+            <button type="button" data-lang="logo" class="on">Logo</button>
+            <button type="button" data-lang="js">JS</button>
+          </span>
+        </div>
         <div style="display:flex;gap:8px;align-items:center">
           <select id="exSel" style="width:auto;margin:0;padding:5px 8px;font-size:12px"><option value="">insert example…</option></select>
           <button class="primary" id="runCode" style="margin:0;padding:5px 14px">Run ▶</button>
@@ -95,9 +104,7 @@
       </div>
       <textarea id="codeArea" spellcheck="false"></textarea>
       <div class="codeErr" id="codeErr"></div>
-      <p class="hint"><b>Commands:</b> <code>fd</code> <code>bk</code> <code>rt</code> <code>lt</code>
-        <code>pu</code> <code>pd</code> <code>seth</code> <code>goto(x,y)</code> ·
-        <code>repeat(n,i=&gt;{…})</code> · <code>poly(sides,len)</code> · plus JS <code>for</code>/<code>let</code>/<code>Math</code>.<br>
+      <p class="hint"><span id="cmdHint"></span><br>
         Edits redraw when you pause typing, or hit Run / Cmd-Ctrl+Enter; invalid code keeps the last good picture and shows the error below. Moving a slider regenerates this code.</p>
     </div>
 
@@ -124,9 +131,210 @@ class Turtle{
 }
 
 /* ----------------------------------------------------------------------------
-   Patterns. Each has slider params and a code(p) that emits the equivalent
-   turtle program as text. The code box is the single source of truth for what
-   gets drawn — sliders simply rewrite that code.
+   Apple-Logo interpreter (LCSI / Terrapin flavor). A tokenizer plus a streaming
+   evaluator with a lookahead cursor, driving the same Turtle. Logo's
+   argument-grabbing falls out of parseExpr() peeking the next token. Errors are
+   thrown and caught by runCode() -> codeError (keeps the last good drawing).
+---------------------------------------------------------------------------- */
+const LOGO_DEG = Math.PI/180;
+const LOGO_REPORTERS = {
+  sin:[1,a=>Math.sin(a[0]*LOGO_DEG)], cos:[1,a=>Math.cos(a[0]*LOGO_DEG)],
+  tan:[1,a=>Math.tan(a[0]*LOGO_DEG)], sqrt:[1,a=>Math.sqrt(a[0])],
+  abs:[1,a=>Math.abs(a[0])], int:[1,a=>Math.trunc(a[0])], round:[1,a=>Math.round(a[0])],
+  random:[1,a=>Math.floor(Math.random()*a[0])], power:[2,a=>Math.pow(a[0],a[1])],
+  remainder:[2,a=>a[0]%a[1]], sum:[2,a=>a[0]+a[1]], difference:[2,a=>a[0]-a[1]],
+  product:[2,a=>a[0]*a[1]], quotient:[2,a=>a[0]/a[1]], pi:[0,()=>Math.PI],
+};
+const LOGO_CMDS = {
+  fd:1, forward:1, bk:1, back:1, rt:1, right:1, lt:1, left:1,
+  pu:0, penup:0, pd:0, pendown:0, home:0, seth:1, setheading:1,
+  setxy:2, goto:2, setpos:2, setx:1, sety:1,
+  ht:0, st:0, hideturtle:0, showturtle:0, cs:0, clearscreen:0,
+};
+function logoTokenize(src){
+  const toks=[]; let i=0; const n=src.length;
+  const word=c=>c && /[^\s\[\]()+\-*/=<>;":]/.test(c);
+  while(i<n){
+    const c=src[i];
+    if(c===';'){ while(i<n && src[i]!=='\n') i++; continue; }
+    if(/\s/.test(c)){ i++; continue; }
+    if(c==='['||c===']'||c==='('||c===')'){ toks.push({t:c}); i++; continue; }
+    if(c==='"'){ i++; let s=''; while(word(src[i])) s+=src[i++]; toks.push({t:'quoted',v:s.toLowerCase()}); continue; }
+    if(c===':'){ i++; let s=''; while(word(src[i])) s+=src[i++]; toks.push({t:'var',v:s.toLowerCase()}); continue; }
+    if(c==='+'||c==='*'||c==='/'||c==='='||c==='-'){ toks.push({t:'op',v:c}); i++; continue; }
+    if(c==='<'||c==='>'){ let op=c; i++; if(src[i]==='='||(c==='<'&&src[i]==='>')){ op+=src[i]; i++; } toks.push({t:'op',v:op}); continue; }
+    if(/[0-9.]/.test(c)){ let s=''; while(i<n && /[0-9.]/.test(src[i])) s+=src[i++]; toks.push({t:'num',v:parseFloat(s)}); continue; }
+    let s=''; while(word(src[i])) s+=src[i++];
+    if(s==='') { i++; continue; }
+    toks.push({t:'word',v:s.toLowerCase()});
+  }
+  return toks;
+}
+class LogoInterpreter{
+  constructor(turtle){ this.t=turtle;
+    this.lineTo=(x,y)=>{ if(turtle.seg.length>200000) throw new Error("Over 200,000 segments — reduce your loops.");
+      if(turtle.pen) turtle.seg.push([turtle.x,turtle.y,x,y]); turtle.x=x; turtle.y=y; };
+  }
+  run(src){
+    this.toks=logoTokenize(src); this.pos=0; this.procs={}; this.scopes=[{}]; this.steps=0;
+    this.collectProcs();
+    try{ while(this.pos<this.toks.length) this.runStatement(); }
+    catch(e){ if(e && e.__logo) return; throw e; }   // top-level stop/output: halt cleanly
+  }
+  tick(){ if(++this.steps>5000000) throw new Error("Too many steps — is a loop or recursion not stopping?"); }
+  peek(){ return this.toks[this.pos]; }
+  atEnd(){ return this.pos>=this.toks.length; }
+  desc(tok){ return tok ? (tok.v!==undefined?("`"+tok.v+"`"):("`"+tok.t+"`")) : "the end of the program"; }
+  collectProcs(){
+    let i=0;
+    while(i<this.toks.length){
+      const tk=this.toks[i];
+      if(tk.t==='word' && tk.v==='to'){
+        i++; const nameTok=this.toks[i];
+        if(!nameTok||nameTok.t!=='word') throw new Error("`to` needs a procedure name");
+        const name=nameTok.v; i++; const params=[];
+        while(i<this.toks.length && this.toks[i].t==='var'){ params.push(this.toks[i].v); i++; }
+        const start=i;
+        while(i<this.toks.length && !(this.toks[i].t==='word'&&this.toks[i].v==='end')){
+          if(this.toks[i].t==='word'&&this.toks[i].v==='to') throw new Error("can't define `to` inside `to`");
+          i++;
+        }
+        if(i>=this.toks.length) throw new Error("`to "+name+"` is missing its `end`");
+        this.procs[name]={params,start,end:i}; i++;
+      } else i++;
+    }
+  }
+  skipProcDef(){ this.pos+=2;            // past 'to' + name
+    while(!this.atEnd() && this.peek().t==='var') this.pos++;
+    while(!this.atEnd() && !(this.peek().t==='word'&&this.peek().v==='end')) this.pos++;
+    if(!this.atEnd()) this.pos++; }
+  callProc(def,args){
+    this.scopes.push({}); if(this.scopes.length>3000) throw new Error("recursion too deep");
+    const sc=this.scopes[this.scopes.length-1];
+    for(let k=0;k<def.params.length;k++) sc[def.params[k]]=args[k];
+    try{ this.runBlock(def.start,def.end); return undefined; }
+    catch(e){ if(e&&e.__logo==='output') return e.value; if(e&&e.__logo==='stop') return undefined; throw e; }
+    finally{ this.scopes.pop(); }
+  }
+  matchBlock(){
+    if(this.atEnd()||this.peek().t!=='[') throw new Error("expected a `[` but saw "+this.desc(this.peek()));
+    this.pos++; const start=this.pos; let d=1;
+    while(this.pos<this.toks.length){ const t=this.toks[this.pos].t;
+      if(t==='[') d++; else if(t===']'){ d--; if(d===0) break; } this.pos++; }
+    if(this.pos>=this.toks.length) throw new Error("missing a `]`");
+    const end=this.pos; this.pos++; return {start,end};
+  }
+  runBlock(start,end){ const save=this.pos; this.pos=start;
+    try{ while(this.pos<end) this.runStatement(); } finally{ this.pos=save; } }
+  runStatement(){
+    this.tick(); const tok=this.peek();
+    if(!tok) return;
+    if(tok.t===']'||tok.t===')') throw new Error("unexpected "+this.desc(tok));
+    if(tok.t!=='word') throw new Error("I don't know what to do with "+this.desc(tok));
+    const w=tok.v;
+    switch(w){
+      case 'to': return this.skipProcDef();
+      case 'end': throw new Error("`end` without a matching `to`");
+      case 'repeat': this.pos++; return this.doRepeat();
+      case 'for': this.pos++; return this.doFor();
+      case 'if': this.pos++; return this.doIf(false);
+      case 'ifelse': this.pos++; return this.doIf(true);
+      case 'make': this.pos++; return this.doMake();
+      case 'stop': this.pos++; throw {__logo:'stop'};
+      case 'output': case 'op': this.pos++; throw {__logo:'output', value:this.parseExpr()};
+      case 'print': case 'pr': this.pos++; this.parseExpr(); return;
+    }
+    if(w in LOGO_CMDS){ this.pos++; return this.doCommand(w, this.grabArgs(LOGO_CMDS[w], w)); }
+    if(this.procs[w]){ this.pos++; const def=this.procs[w]; this.callProc(def, this.grabArgs(def.params.length, w)); return; }
+    throw new Error("I don't know how to `"+w+"`");
+  }
+  doCommand(w,a){ const t=this.t;
+    switch(w){
+      case 'fd': case 'forward': t.fd(a[0]); break;
+      case 'bk': case 'back': t.fd(-a[0]); break;
+      case 'rt': case 'right': t.rt(a[0]); break;
+      case 'lt': case 'left': t.lt(a[0]); break;
+      case 'pu': case 'penup': t.up(); break;
+      case 'pd': case 'pendown': t.down(); break;
+      case 'home': t.x=0; t.y=0; t.h=0; break;
+      case 'seth': case 'setheading': t.h=a[0]; break;
+      case 'setxy': case 'goto': case 'setpos': this.lineTo(a[0],a[1]); break;
+      case 'setx': this.lineTo(a[0],t.y); break;
+      case 'sety': this.lineTo(t.x,a[0]); break;
+      // ht/st/cs are accepted no-ops (one-shot drawing has no live turtle/screen)
+    }
+  }
+  doRepeat(){ const count=Math.floor(this.parseExpr()); const blk=this.matchBlock();
+    for(let k=0;k<count;k++){ this.tick(); this.runBlock(blk.start,blk.end); } }
+  doFor(){
+    if(this.atEnd()||this.peek().t!=='[') throw new Error("`for` wants [name start end (step)]");
+    const hdr=this.matchBlock(); const save=this.pos; this.pos=hdr.start;
+    const vt=this.toks[this.pos];
+    if(!vt||vt.t!=='word') throw new Error("`for` needs a variable name");
+    const name=vt.v; this.pos++;
+    const a=this.parseExpr(), b=this.parseExpr();
+    const step=(this.pos<hdr.end)? this.parseExpr() : (a<=b?1:-1);
+    this.pos=save; const blk=this.matchBlock();
+    if(step===0) throw new Error("`for` step cannot be 0");
+    this.scopes.push({}); const sc=this.scopes[this.scopes.length-1];
+    try{ for(let v=a; step>0? v<=b : v>=b; v+=step){ this.tick(); sc[name]=v; this.runBlock(blk.start,blk.end); } }
+    finally{ this.scopes.pop(); }
+  }
+  doIf(hasElse){ const cond=this.evalCondition(); const thenB=this.matchBlock();
+    let elseB=null; if(hasElse) elseB=this.matchBlock();
+    if(cond) this.runBlock(thenB.start,thenB.end);
+    else if(elseB) this.runBlock(elseB.start,elseB.end);
+  }
+  doMake(){ const nt=this.peek();
+    if(!nt||nt.t!=='quoted') throw new Error('`make` wants a "name then a value');
+    this.pos++; const val=this.parseExpr(); this.setVar(nt.v,val);
+  }
+  grabArgs(n,name){ const a=[];
+    for(let k=0;k<n;k++){ const tk=this.peek();
+      if(!tk||tk.t===']'||tk.t===')') throw new Error("`"+name+"` needs "+n+" input"+(n===1?"":"s"));
+      a.push(this.parseExpr()); }
+    return a;
+  }
+  evalCondition(){ const l=this.parseExpr(); const op=this.peek();
+    if(op&&op.t==='op'&&/^(=|<|>|<=|>=|<>)$/.test(op.v)){ this.pos++; const r=this.parseExpr();
+      switch(op.v){ case '=':return l===r; case '<':return l<r; case '>':return l>r;
+        case '<=':return l<=r; case '>=':return l>=r; case '<>':return l!==r; } }
+    return !!l;
+  }
+  parseExpr(){ let v=this.parseTerm();
+    for(;;){ const op=this.peek(); if(op&&op.t==='op'&&(op.v==='+'||op.v==='-')){ this.pos++; const r=this.parseTerm(); v=op.v==='+'?v+r:v-r; } else break; }
+    return v;
+  }
+  parseTerm(){ let v=this.parseFactor();
+    for(;;){ const op=this.peek(); if(op&&op.t==='op'&&(op.v==='*'||op.v==='/')){ this.pos++; const r=this.parseFactor(); v=op.v==='*'?v*r:v/r; } else break; }
+    return v;
+  }
+  parseFactor(){ const tok=this.peek();
+    if(!tok) throw new Error("expected a value but the program ended");
+    if(tok.t==='op'&&tok.v==='-'){ this.pos++; return -this.parseFactor(); }
+    if(tok.t==='num'){ this.pos++; return tok.v; }
+    if(tok.t==='var'){ this.pos++; return this.lookup(tok.v); }
+    if(tok.t==='('){ this.pos++; const v=this.parseExpr();
+      if(this.atEnd()||this.peek().t!==')') throw new Error("missing a `)`"); this.pos++; return v; }
+    if(tok.t==='word'){ const w=tok.v;
+      if(w in LOGO_REPORTERS){ this.pos++; const [ar,fn]=LOGO_REPORTERS[w]; return fn(this.grabArgs(ar,w)); }
+      if(this.procs[w]){ this.pos++; const def=this.procs[w]; const out=this.callProc(def,this.grabArgs(def.params.length,w));
+        if(out===undefined) throw new Error("`"+w+"` did not `output` a value"); return out; }
+      throw new Error("`"+w+"` is not a number or reporter");
+    }
+    throw new Error("unexpected "+this.desc(tok));
+  }
+  lookup(name){ for(let s=this.scopes.length-1;s>=0;s--) if(name in this.scopes[s]) return this.scopes[s][name];
+    throw new Error("`:"+name+"` has no value (use `make` to set it)"); }
+  setVar(name,val){ for(let s=this.scopes.length-1;s>=0;s--) if(name in this.scopes[s]){ this.scopes[s][name]=val; return; }
+    this.scopes[0][name]=val; }
+}
+
+/* ----------------------------------------------------------------------------
+   Patterns. Each has slider params and code.logo(p) / code.js(p) generators
+   that emit the equivalent turtle program as text in the active language. The
+   code box is the single source of truth for what gets drawn — sliders simply
+   rewrite that code.
 ---------------------------------------------------------------------------- */
 const PATTERNS = {
   inspiral:{
@@ -139,12 +347,17 @@ const PATTERNS = {
       {key:"step",label:"side step",min:1,max:60,step:1,value:10,int:true},
       {key:"angle",label:"turn °",min:1,max:359,step:0.5,value:170},
     ],
-    code:p=>`// Inspiral stars
+    code:{
+      logo:p=>{const c=Math.floor((p.end-p.start)/p.step)+1;return `REPEAT ${p.repeats} [
+  MAKE "SIDE ${p.start}
+  REPEAT ${c} [ FD :SIDE  RT ${p.angle}  MAKE "SIDE :SIDE + ${p.step} ]
+]`;},
+      js:p=>`// Inspiral stars
 for (let r = 0; r < ${p.repeats}; r++)
   for (let side = ${p.start}; side <= ${p.end}; side += ${p.step}) {
     fd(side);
     rt(${p.angle});
-  }`
+  }`}
   },
   polyspiral:{
     name:"Polyspiral",
@@ -155,13 +368,16 @@ for (let r = 0; r < ${p.repeats}; r++)
       {key:"inc",label:"grow by",min:0,max:5,step:0.05,value:0.6},
       {key:"angle",label:"turn °",min:1,max:359,step:0.1,value:89.5},
     ],
-    code:p=>`// Polyspiral
+    code:{
+      logo:p=>`MAKE "LEN ${p.start}
+REPEAT ${p.count} [ FD :LEN  RT ${p.angle}  MAKE "LEN :LEN + ${p.inc} ]`,
+      js:p=>`// Polyspiral
 let len = ${p.start};
 for (let i = 0; i < ${p.count}; i++) {
   fd(len);
   rt(${p.angle});
   len += ${p.inc};
-}`
+}`}
   },
   spirolateral:{
     name:"Spirolateral",
@@ -172,12 +388,17 @@ for (let i = 0; i < ${p.count}; i++) {
       {key:"angle",label:"turn °",min:1,max:359,step:0.1,value:115},
       {key:"reps",label:"repeats",min:1,max:60,step:1,value:24,int:true},
     ],
-    code:p=>`// Spirolateral
+    code:{
+      logo:p=>`REPEAT ${p.reps} [
+  MAKE "I 1
+  REPEAT ${p.order} [ FD :I * ${p.unit}  RT ${p.angle}  MAKE "I :I + 1 ]
+]`,
+      js:p=>`// Spirolateral
 for (let r = 0; r < ${p.reps}; r++)
   for (let i = 1; i <= ${p.order}; i++) {
     fd(i * ${p.unit});
     rt(${p.angle});
-  }`
+  }`}
   },
   star:{
     name:"Star polygon {n/k}",
@@ -188,7 +409,15 @@ for (let r = 0; r < ${p.reps}; r++)
       {key:"size",label:"side len",min:10,max:300,step:1,value:120,int:true},
       {key:"layers",label:"layers",min:1,max:12,step:1,value:1,int:true},
     ],
-    code:p=>`// Star polygon {${p.points}/${p.skip}}
+    code:{
+      logo:p=>`MAKE "A 360 * ${p.skip} / ${p.points}
+MAKE "LAYER 0
+REPEAT ${p.layers} [
+  REPEAT ${p.points} [ FD ${p.size} - :LAYER * 8  RT :A ]
+  RT 360 / ${p.points} / ${p.layers}
+  MAKE "LAYER :LAYER + 1
+]`,
+      js:p=>`// Star polygon {${p.points}/${p.skip}}
 const a = 360 * ${p.skip} / ${p.points};
 for (let L = 0; L < ${p.layers}; L++) {
   for (let i = 0; i < ${p.points}; i++) {
@@ -196,7 +425,7 @@ for (let L = 0; L < ${p.layers}; L++) {
     rt(a);
   }
   rt(360 / ${p.points} / ${p.layers});
-}`
+}`}
   },
   petals:{
     name:"Flower of polygons",
@@ -206,11 +435,16 @@ for (let L = 0; L < ${p.layers}; L++) {
       {key:"sides",label:"polygon sides",min:3,max:24,step:1,value:4,int:true},
       {key:"size",label:"side len",min:10,max:200,step:1,value:90,int:true},
     ],
-    code:p=>`// Flower of polygons
+    code:{
+      logo:p=>`REPEAT ${p.petals} [
+  REPEAT ${p.sides} [ FD ${p.size}  RT 360 / ${p.sides} ]
+  RT 360 / ${p.petals}
+]`,
+      js:p=>`// Flower of polygons
 for (let i = 0; i < ${p.petals}; i++) {
   poly(${p.sides}, ${p.size});
   rt(360 / ${p.petals});
-}`
+}`}
   },
   rose:{
     name:"Rose / hypotrochoid",
@@ -221,7 +455,21 @@ for (let i = 0; i < ${p.petals}; i++) {
       {key:"wobble",label:"wobble",min:0,max:1,step:0.01,value:0},
       {key:"steps",label:"smoothness",min:200,max:3000,step:10,value:1440,int:true},
     ],
-    code:p=>`// Rose  r = cos(k·θ)
+    code:{
+      logo:p=>`MAKE "K ${p.k}
+MAKE "R ${p.size}
+MAKE "WOB ${p.wobble}
+MAKE "STEPS ${p.steps}
+PU
+MAKE "I 0
+REPEAT ${p.steps + 1} [
+  MAKE "TH :I / :STEPS * 360 * :K
+  MAKE "RAD :R * ( COS (:K * :TH) + :WOB * COS (3 * :TH) )
+  SETXY (:RAD * COS (:TH)) (:RAD * SIN (:TH))
+  PD
+  MAKE "I :I + 1
+]`,
+      js:p=>`// Rose  r = cos(k·θ)
 const k = ${p.k}, R = ${p.size}, wob = ${p.wobble}, steps = ${p.steps};
 pu();
 for (let i = 0; i <= steps; i++) {
@@ -229,7 +477,7 @@ for (let i = 0; i <= steps; i++) {
   const r = R * (Math.cos(k * th) + wob * Math.cos(3 * th));
   goto(r * Math.cos(th), r * Math.sin(th));
   pd();
-}`
+}`}
   },
 };
 
@@ -237,8 +485,17 @@ const PALETTE = ["#1b3bff","#e23b3b","#1b9e4b","#7a3bd6","#0f1115","#ff8c1a"];
 
 /* Bonus programs that go beyond the sliders (insert into the code box) */
 const EXAMPLES = [
-  {name:"Recursive tree", code:
-`function tree(len, depth) {
+  {name:"Recursive tree",
+   logo:`TO TREE :LEN :DEPTH
+  IF :DEPTH = 0 [STOP]
+  FD :LEN
+  RT 28  TREE :LEN * 0.72 :DEPTH - 1
+  LT 56  TREE :LEN * 0.72 :DEPTH - 1
+  RT 28
+  PU  BK :LEN  PD
+END
+TREE 120 10`,
+   js:`function tree(len, depth) {
   if (depth === 0) return;
   fd(len);
   rt(28); tree(len * 0.72, depth - 1);
@@ -247,13 +504,15 @@ const EXAMPLES = [
   pu(); bk(len); pd();
 }
 tree(120, 10);`},
-  {name:"Starburst ring", code:
-`repeat(36, () => {
+  {name:"Starburst ring",
+   logo:`REPEAT 36 [ REPEAT 5 [ FD 150  RT 144 ]  RT 10 ]`,
+   js:`repeat(36, () => {
   repeat(5, () => { fd(150); rt(144); });
   rt(10);
 });`},
-  {name:"Spiral of squares", code:
-`for (let i = 0; i < 36; i++) {
+  {name:"Spiral of squares",
+   logo:`REPEAT 36 [ REPEAT 4 [ FD 80  RT 90 ]  RT 10 ]`,
+   js:`for (let i = 0; i < 36; i++) {
   poly(4, 80);
   rt(10);
 }`},
@@ -270,6 +529,7 @@ const state = {};                       // per-pattern current param values
 for(const k in PATTERNS){state[k]={};PATTERNS[k].params.forEach(p=>state[k][p.key]=p.value);}
 let current = "inspiral";
 let color = PALETTE[0];
+let lang = "logo";          // "logo" (Apple Logo) or "js"
 
 const $ = s=>document.querySelector(s);
 const sel = $("#pattern"), ctrls = $("#controls"), desc = $("#patternDesc");
@@ -305,10 +565,24 @@ function buildControls(){
 
 function showCodeErr(){const el=$("#codeErr");if(el)el.textContent=codeError?("⚠ "+codeError):"";}
 
-// Regenerate the code box from the current preset + slider values
+// Regenerate the code box from the current preset + slider values, in the active language
 function syncCodeFromSliders(){
-  codeText=PATTERNS[current].code(state[current]);
+  codeText=PATTERNS[current].code[lang](state[current]);
   const ta=$("#codeArea"); if(ta)ta.value=codeText;
+}
+
+// Command-reference text shown under the editor, per language
+const CMD_HINT={
+  logo:`<b>Logo:</b> <code>FD</code> <code>BK</code> <code>RT</code> <code>LT</code> <code>PU</code> <code>PD</code> <code>SETH</code> <code>SETXY</code> · <code>REPEAT n [ … ]</code> · <code>MAKE "X …</code> · <code>:X</code> · <code>TO NAME :A … END</code> · <code>IF</code>/<code>IFELSE</code> · <code>STOP</code> · <code>COS</code>/<code>SIN</code> in degrees · <code>;</code> comment`,
+  js:`<b>JS:</b> <code>fd</code> <code>bk</code> <code>rt</code> <code>lt</code> <code>pu</code> <code>pd</code> <code>seth</code> <code>goto(x,y)</code> · <code>repeat(n,i=&gt;{…})</code> · <code>poly(sides,len)</code> · plus <code>for</code>/<code>let</code>/<code>Math</code>`,
+};
+// Switch language: highlight the toggle, swap the hint, regenerate the code, redraw
+function setLang(l){
+  lang=l;
+  document.querySelectorAll('#langToggle button').forEach(b=>b.classList.toggle('on', b.dataset.lang===l));
+  const h=$("#cmdHint"); if(h) h.innerHTML=CMD_HINT[l];
+  syncCodeFromSliders();
+  redraw();
 }
 
 // Wire the always-visible code editor (runs once at startup)
@@ -320,7 +594,8 @@ function wireCodeBox(){
   ta.addEventListener('keydown',e=>{if((e.metaKey||e.ctrlKey)&&e.key==='Enter'){e.preventDefault();runNow();}});
   $("#runCode").onclick=runNow;
   ex.addEventListener('change',e=>{ if(e.target.value==="")return;
-    codeText=EXAMPLES[+e.target.value].code; ta.value=codeText; e.target.value=""; runNow(); });
+    codeText=EXAMPLES[+e.target.value][lang]; ta.value=codeText; e.target.value=""; runNow(); });
+  document.querySelectorAll('#langToggle button').forEach(b=>b.onclick=()=>setLang(b.dataset.lang));
 }
 
 sel.addEventListener('change',()=>{current=sel.value;buildControls();syncCodeFromSliders();redraw();});
@@ -342,9 +617,10 @@ function makeAPI(t){
   };
 }
 function runCode(t,src){codeError="";
-  const api=makeAPI(t);
-  try{ (new Function(...Object.keys(api),src))(...Object.values(api)); }
-  catch(e){ codeError=String(e&&e.message||e); }
+  try{
+    if(lang==="logo"){ new LogoInterpreter(t).run(src); }
+    else { const api=makeAPI(t); (new Function(...Object.keys(api),src))(...Object.values(api)); }
+  }catch(e){ if(!(e&&e.__logo)) codeError=String(e&&e.message||e); }
 }
 
 function run(){const t=new Turtle();runCode(t,codeText);return t.seg;}
@@ -439,7 +715,7 @@ $("#surprise").onclick=()=>{PATTERNS[current].params.forEach(p=>{
 
 window.addEventListener('resize',()=>redraw());
 
-buildSwatches();buildControls();wireCodeBox();syncCodeFromSliders();redraw();
+buildSwatches();buildControls();wireCodeBox();setLang(lang);
 </script>
 </body>
 </html>
