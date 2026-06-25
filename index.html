@@ -131,7 +131,7 @@ class Turtle{
 }
 
 /* ----------------------------------------------------------------------------
-   Apple-Logo interpreter (LCSI / Terrapin flavor). A tokenizer plus a streaming
+   UCBLogo-style interpreter. A tokenizer plus a streaming
    evaluator with a lookahead cursor, driving the same Turtle. Logo's
    argument-grabbing falls out of parseExpr() peeking the next token. Errors are
    thrown and caught by runCode() -> codeError (keeps the last good drawing).
@@ -348,10 +348,12 @@ const PATTERNS = {
       {key:"angle",label:"turn °",min:1,max:359,step:0.5,value:170},
     ],
     code:{
-      logo:p=>{const c=Math.floor((p.end-p.start)/p.step)+1;return `REPEAT ${p.repeats} [
-  MAKE "SIDE ${p.start}
-  REPEAT ${c} [ FD :SIDE  RT ${p.angle}  MAKE "SIDE :SIDE + ${p.step} ]
-]`;},
+      logo:p=>`repeat ${p.repeats} [
+  for [side ${p.start} ${p.end} ${p.step}] [
+    fd :side
+    rt ${p.angle}
+  ]
+]`,
       js:p=>`// Inspiral stars
 for (let r = 0; r < ${p.repeats}; r++)
   for (let side = ${p.start}; side <= ${p.end}; side += ${p.step}) {
@@ -369,8 +371,12 @@ for (let r = 0; r < ${p.repeats}; r++)
       {key:"angle",label:"turn °",min:1,max:359,step:0.1,value:89.5},
     ],
     code:{
-      logo:p=>`MAKE "LEN ${p.start}
-REPEAT ${p.count} [ FD :LEN  RT ${p.angle}  MAKE "LEN :LEN + ${p.inc} ]`,
+      logo:p=>`make "len ${p.start}
+repeat ${p.count} [
+  fd :len
+  rt ${p.angle}
+  make "len :len + ${p.inc}
+]`,
       js:p=>`// Polyspiral
 let len = ${p.start};
 for (let i = 0; i < ${p.count}; i++) {
@@ -389,9 +395,11 @@ for (let i = 0; i < ${p.count}; i++) {
       {key:"reps",label:"repeats",min:1,max:60,step:1,value:24,int:true},
     ],
     code:{
-      logo:p=>`REPEAT ${p.reps} [
-  MAKE "I 1
-  REPEAT ${p.order} [ FD :I * ${p.unit}  RT ${p.angle}  MAKE "I :I + 1 ]
+      logo:p=>`repeat ${p.reps} [
+  for [i 1 ${p.order}] [
+    fd :i * ${p.unit}
+    rt ${p.angle}
+  ]
 ]`,
       js:p=>`// Spirolateral
 for (let r = 0; r < ${p.reps}; r++)
@@ -410,12 +418,13 @@ for (let r = 0; r < ${p.reps}; r++)
       {key:"layers",label:"layers",min:1,max:12,step:1,value:1,int:true},
     ],
     code:{
-      logo:p=>`MAKE "A 360 * ${p.skip} / ${p.points}
-MAKE "LAYER 0
-REPEAT ${p.layers} [
-  REPEAT ${p.points} [ FD ${p.size} - :LAYER * 8  RT :A ]
-  RT 360 / ${p.points} / ${p.layers}
-  MAKE "LAYER :LAYER + 1
+      logo:p=>`make "a 360 * ${p.skip} / ${p.points}
+for [layer 0 ${p.layers - 1}] [
+  repeat ${p.points} [
+    fd ${p.size} - :layer * 8
+    rt :a
+  ]
+  rt 360 / ${p.points} / ${p.layers}
 ]`,
       js:p=>`// Star polygon {${p.points}/${p.skip}}
 const a = 360 * ${p.skip} / ${p.points};
@@ -436,9 +445,9 @@ for (let L = 0; L < ${p.layers}; L++) {
       {key:"size",label:"side len",min:10,max:200,step:1,value:90,int:true},
     ],
     code:{
-      logo:p=>`REPEAT ${p.petals} [
-  REPEAT ${p.sides} [ FD ${p.size}  RT 360 / ${p.sides} ]
-  RT 360 / ${p.petals}
+      logo:p=>`repeat ${p.petals} [
+  repeat ${p.sides} [ fd ${p.size}  rt 360 / ${p.sides} ]
+  rt 360 / ${p.petals}
 ]`,
       js:p=>`// Flower of polygons
 for (let i = 0; i < ${p.petals}; i++) {
@@ -456,18 +465,16 @@ for (let i = 0; i < ${p.petals}; i++) {
       {key:"steps",label:"smoothness",min:200,max:3000,step:10,value:1440,int:true},
     ],
     code:{
-      logo:p=>`MAKE "K ${p.k}
-MAKE "R ${p.size}
-MAKE "WOB ${p.wobble}
-MAKE "STEPS ${p.steps}
-PU
-MAKE "I 0
-REPEAT ${p.steps + 1} [
-  MAKE "TH :I / :STEPS * 360 * :K
-  MAKE "RAD :R * ( COS (:K * :TH) + :WOB * COS (3 * :TH) )
-  SETXY (:RAD * COS (:TH)) (:RAD * SIN (:TH))
-  PD
-  MAKE "I :I + 1
+      logo:p=>`make "k ${p.k}
+make "rad ${p.size}
+make "wob ${p.wobble}
+make "steps ${p.steps}
+pu
+for [i 0 :steps] [
+  make "th :i / :steps * 360 * :k
+  make "r :rad * ( cos (:k * :th) + :wob * cos (3 * :th) )
+  setxy (:r * cos (:th)) (:r * sin (:th))
+  pd
 ]`,
       js:p=>`// Rose  r = cos(k·θ)
 const k = ${p.k}, R = ${p.size}, wob = ${p.wobble}, steps = ${p.steps};
@@ -486,15 +493,15 @@ const PALETTE = ["#1b3bff","#e23b3b","#1b9e4b","#7a3bd6","#0f1115","#ff8c1a"];
 /* Bonus programs that go beyond the sliders (insert into the code box) */
 const EXAMPLES = [
   {name:"Recursive tree",
-   logo:`TO TREE :LEN :DEPTH
-  IF :DEPTH = 0 [STOP]
-  FD :LEN
-  RT 28  TREE :LEN * 0.72 :DEPTH - 1
-  LT 56  TREE :LEN * 0.72 :DEPTH - 1
-  RT 28
-  PU  BK :LEN  PD
-END
-TREE 120 10`,
+   logo:`to tree :len :depth
+  if :depth = 0 [stop]
+  fd :len
+  rt 28  tree :len * 0.72 :depth - 1
+  lt 56  tree :len * 0.72 :depth - 1
+  rt 28
+  pu  bk :len  pd
+end
+tree 120 10`,
    js:`function tree(len, depth) {
   if (depth === 0) return;
   fd(len);
@@ -505,13 +512,13 @@ TREE 120 10`,
 }
 tree(120, 10);`},
   {name:"Starburst ring",
-   logo:`REPEAT 36 [ REPEAT 5 [ FD 150  RT 144 ]  RT 10 ]`,
+   logo:`repeat 36 [ repeat 5 [ fd 150  rt 144 ]  rt 10 ]`,
    js:`repeat(36, () => {
   repeat(5, () => { fd(150); rt(144); });
   rt(10);
 });`},
   {name:"Spiral of squares",
-   logo:`REPEAT 36 [ REPEAT 4 [ FD 80  RT 90 ]  RT 10 ]`,
+   logo:`repeat 36 [ repeat 4 [ fd 80  rt 90 ]  rt 10 ]`,
    js:`for (let i = 0; i < 36; i++) {
   poly(4, 80);
   rt(10);
@@ -529,7 +536,7 @@ const state = {};                       // per-pattern current param values
 for(const k in PATTERNS){state[k]={};PATTERNS[k].params.forEach(p=>state[k][p.key]=p.value);}
 let current = "inspiral";
 let color = PALETTE[0];
-let lang = "logo";          // "logo" (Apple Logo) or "js"
+let lang = "logo";          // "logo" (UCBLogo) or "js"
 
 const $ = s=>document.querySelector(s);
 const sel = $("#pattern"), ctrls = $("#controls"), desc = $("#patternDesc");
@@ -573,7 +580,7 @@ function syncCodeFromSliders(){
 
 // Command-reference text shown under the editor, per language
 const CMD_HINT={
-  logo:`<b>Logo:</b> <code>FD</code> <code>BK</code> <code>RT</code> <code>LT</code> <code>PU</code> <code>PD</code> <code>SETH</code> <code>SETXY</code> · <code>REPEAT n [ … ]</code> · <code>MAKE "X …</code> · <code>:X</code> · <code>TO NAME :A … END</code> · <code>IF</code>/<code>IFELSE</code> · <code>STOP</code> · <code>COS</code>/<code>SIN</code> in degrees · <code>;</code> comment`,
+  logo:`<b>Logo:</b> <code>fd</code> <code>bk</code> <code>rt</code> <code>lt</code> <code>pu</code> <code>pd</code> <code>seth</code> <code>setxy</code> · <code>repeat n [ … ]</code> · <code>for [i a b] [ … ]</code> · <code>make "x …</code> · <code>:x</code> · <code>to name :a … end</code> · <code>if</code>/<code>ifelse</code> · <code>cos</code>/<code>sin</code> degrees · <code>;</code> comment`,
   js:`<b>JS:</b> <code>fd</code> <code>bk</code> <code>rt</code> <code>lt</code> <code>pu</code> <code>pd</code> <code>seth</code> <code>goto(x,y)</code> · <code>repeat(n,i=&gt;{…})</code> · <code>poly(sides,len)</code> · plus <code>for</code>/<code>let</code>/<code>Math</code>`,
 };
 // Switch language: highlight the toggle, swap the hint, regenerate the code, redraw
