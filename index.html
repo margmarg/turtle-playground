@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Turtle Geometry Playground</title>
+<style>
+  :root{
+    --bg:#0f1115; --panel:#171a21; --panel2:#1f232c; --ink:#e8eaed;
+    --muted:#9aa3b2; --accent:#6ea8ff; --accent2:#ffd166; --line:#2a2f3a;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);
+    font:14px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
+  .app{display:grid;grid-template-columns:320px 1fr;height:100vh}
+  /* ---- sidebar ---- */
+  .side{background:var(--panel);border-right:1px solid var(--line);
+    padding:16px;overflow-y:auto}
+  h1{font-size:16px;margin:0 0 2px}
+  .sub{color:var(--muted);font-size:12px;margin:0 0 16px}
+  label.field{display:block;margin:0 0 14px}
+  .field .row{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:4px}
+  .field .name{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
+  .field input[type=number]{width:78px;background:var(--panel2);border:1px solid var(--line);
+    color:var(--ink);border-radius:6px;padding:3px 6px;font-size:13px;text-align:right}
+  .field input[type=range]{width:100%;accent-color:var(--accent)}
+  select,button{font:inherit}
+  select{width:100%;background:var(--panel2);color:var(--ink);border:1px solid var(--line);
+    border-radius:8px;padding:8px 10px;margin-bottom:8px}
+  .desc{color:var(--muted);font-size:12px;margin:-2px 0 16px;min-height:30px}
+  .btns{display:flex;gap:8px;flex-wrap:wrap;margin:6px 0 16px}
+  button{background:var(--panel2);color:var(--ink);border:1px solid var(--line);
+    border-radius:8px;padding:8px 12px;cursor:pointer}
+  button:hover{border-color:var(--accent)}
+  button.primary{background:var(--accent);color:#06122b;border-color:var(--accent);font-weight:600}
+  .swatches{display:flex;gap:8px;margin:4px 0 16px}
+  .swatch{width:26px;height:26px;border-radius:50%;cursor:pointer;border:2px solid transparent}
+  .swatch.sel{border-color:#fff}
+  .stat{display:flex;justify-content:space-between;font-size:12px;color:var(--muted);
+    border-top:1px solid var(--line);padding-top:10px;margin-top:4px}
+  .hint{font-size:11px;color:var(--muted);margin-top:14px;line-height:1.5}
+  code{background:var(--panel2);padding:1px 5px;border-radius:4px;font-size:12px}
+  /* ---- stage ---- */
+  .stage{position:relative;display:flex;align-items:center;justify-content:center;padding:24px}
+  canvas{background:#fbfbfd;border-radius:12px;box-shadow:0 10px 40px rgba(0,0,0,.45);
+    max-width:100%;max-height:100%}
+  .toolbar{position:absolute;top:16px;right:16px;display:flex;gap:8px}
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="side">
+    <h1>Turtle Geometry Playground</h1>
+    <p class="sub">Live turtle graphics. Drag a slider, watch it redraw.</p>
+
+    <div class="field"><div class="name" style="margin-bottom:6px">Pattern</div>
+      <select id="pattern"></select>
+      <div class="desc" id="patternDesc"></div>
+    </div>
+
+    <div id="controls"></div>
+
+    <div class="name" style="font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;margin-bottom:6px">Color</div>
+    <div class="swatches" id="swatches"></div>
+
+    <div class="btns">
+      <button class="primary" id="animate">▶ Animate draw</button>
+      <button id="surprise">🎲 Surprise me</button>
+      <button id="reset">↺ Reset</button>
+    </div>
+    <div class="btns">
+      <button id="saveSvg">⬇ SVG (for stitching)</button>
+      <button id="savePng">⬇ PNG</button>
+    </div>
+
+    <div class="stat"><span>Segments</span><span id="statSeg">–</span></div>
+    <div class="stat"><span>Path length</span><span id="statLen">–</span></div>
+
+    <p class="hint">Every pattern is one continuous pen-down path, so the SVG is a single
+      running-stitch line: drop it into your <code>svg-to-embroidery</code> pipeline.<br><br>
+      Default pattern reproduces your Turtlestitch blocks: <code>repeat 18 · side 10→300 step 10 · turn 170°</code>.</p>
+  </aside>
+
+  <main class="stage">
+    <canvas id="c" width="900" height="900"></canvas>
+  </main>
+</div>
+
+<script>
+/* ----------------------------------------------------------------------------
+   Tiny turtle: heading 0 = up, right() turns clockwise. Records every segment.
+---------------------------------------------------------------------------- */
+class Turtle{
+  constructor(){this.x=0;this.y=0;this.h=0;this.pen=true;this.seg=[];}
+  fd(d){const r=this.h*Math.PI/180,nx=this.x+d*Math.sin(r),ny=this.y-d*Math.cos(r);
+    if(this.pen)this.seg.push([this.x,this.y,nx,ny]);this.x=nx;this.y=ny;}
+  rt(a){this.h+=a;} lt(a){this.h-=a;}
+  up(){this.pen=false;} down(){this.pen=true;}
+}
+
+/* ----------------------------------------------------------------------------
+   Patterns. Each has params (with sane ranges) and a draw(turtle, p) routine.
+---------------------------------------------------------------------------- */
+const PATTERNS = {
+  inspiral:{
+    name:"Inspiral Stars (your original)",
+    desc:"A growing spike repeated in a ring. Turn ≈170° makes each move nearly backtrack, leaving long radiating spikes.",
+    params:[
+      {key:"repeats",label:"repeats",min:1,max:60,step:1,value:18,int:true},
+      {key:"start",label:"side start",min:1,max:200,step:1,value:10,int:true},
+      {key:"end",label:"side end",min:20,max:600,step:1,value:300,int:true},
+      {key:"step",label:"side step",min:1,max:60,step:1,value:10,int:true},
+      {key:"angle",label:"turn °",min:1,max:359,step:0.5,value:170},
+    ],
+    draw(t,p){for(let r=0;r<p.repeats;r++)
+      for(let s=p.start;s<=p.end;s+=p.step){t.fd(s);t.rt(p.angle);}}
+  },
+  polyspiral:{
+    name:"Polyspiral",
+    desc:"Walk forward, turn a fixed angle, grow the step a little each time. The classic turtle spiral.",
+    params:[
+      {key:"count",label:"steps",min:10,max:1200,step:1,value:400,int:true},
+      {key:"start",label:"start len",min:1,max:50,step:0.5,value:2},
+      {key:"inc",label:"grow by",min:0,max:5,step:0.05,value:0.6},
+      {key:"angle",label:"turn °",min:1,max:359,step:0.1,value:89.5},
+    ],
+    draw(t,p){let L=p.start;for(let i=0;i<p.count;i++){t.fd(L);t.rt(p.angle);L+=p.inc;}}
+  },
+  spirolateral:{
+    name:"Spirolateral",
+    desc:"Forward 1,2,3,… up to 'order', fixed turn, then repeat the whole run. Tiny angle changes give wildly different tilings.",
+    params:[
+      {key:"order",label:"order (1..n)",min:2,max:30,step:1,value:7,int:true},
+      {key:"unit",label:"unit len",min:2,max:40,step:1,value:14,int:true},
+      {key:"angle",label:"turn °",min:1,max:359,step:0.1,value:115},
+      {key:"reps",label:"repeats",min:1,max:60,step:1,value:24,int:true},
+    ],
+    draw(t,p){for(let r=0;r<p.reps;r++)
+      for(let i=1;i<=p.order;i++){t.fd(i*p.unit);t.rt(p.angle);}}
+  },
+  star:{
+    name:"Star polygon {n/k}",
+    desc:"Connect every k-th point of an n-point circle. {5/2}=pentagram, {7/3}=heptagram, and so on.",
+    params:[
+      {key:"points",label:"points n",min:5,max:60,step:1,value:11,int:true},
+      {key:"skip",label:"skip k",min:2,max:29,step:1,value:4,int:true},
+      {key:"size",label:"side len",min:10,max:300,step:1,value:120,int:true},
+      {key:"layers",label:"layers",min:1,max:12,step:1,value:1,int:true},
+    ],
+    draw(t,p){const a=360*p.skip/p.points;
+      for(let L=0;L<p.layers;L++){
+        for(let i=0;i<p.points;i++){t.fd(p.size-L*8);t.rt(a);}
+        t.rt(360/p.points/p.layers);}}
+  },
+  petals:{
+    name:"Flower of polygons",
+    desc:"Draw a polygon, spin a bit, draw it again. Overlapping rings of shapes make petals and rosettes.",
+    params:[
+      {key:"petals",label:"petals",min:2,max:60,step:1,value:18,int:true},
+      {key:"sides",label:"polygon sides",min:3,max:24,step:1,value:4,int:true},
+      {key:"size",label:"side len",min:10,max:200,step:1,value:90,int:true},
+    ],
+    draw(t,p){for(let i=0;i<p.petals;i++){
+      for(let s=0;s<p.sides;s++){t.fd(p.size);t.rt(360/p.sides);}
+      t.rt(360/p.petals);}}
+  },
+  rose:{
+    name:"Rose / hypotrochoid",
+    desc:"A turtle tracing r = cos(k·θ). Change petals (k) and the wobble for roses, gears, and lace.",
+    params:[
+      {key:"k",label:"petals k",min:1,max:20,step:1,value:7,int:true},
+      {key:"size",label:"radius",min:50,max:400,step:1,value:300,int:true},
+      {key:"wobble",label:"wobble",min:0,max:1,step:0.01,value:0},
+      {key:"steps",label:"smoothness",min:200,max:3000,step:10,value:1440,int:true},
+    ],
+    draw(t,p){t.up();let first=true;
+      for(let i=0;i<=p.steps;i++){const th=i/p.steps*Math.PI*2*p.k;
+        const r=p.size*(Math.cos(p.k*th)+p.wobble*Math.cos(3*th));
+        const x=r*Math.cos(th),y=r*Math.sin(th);
+        if(first){t.x=x;t.y=y;t.down();first=false;}
+        else t.seg.push([t.x,t.y,x,y]),t.x=x,t.y=y;}}
+  },
+};
+
+const PALETTE = ["#1b3bff","#e23b3b","#1b9e4b","#7a3bd6","#0f1115","#ff8c1a"];
+
+/* ----------------------------------------------------------------------------
+   State + UI wiring
+---------------------------------------------------------------------------- */
+const state = {};                       // per-pattern current param values
+for(const k in PATTERNS){state[k]={};PATTERNS[k].params.forEach(p=>state[k][p.key]=p.value);}
+let current = "inspiral";
+let color = PALETTE[0];
+
+const $ = s=>document.querySelector(s);
+const sel = $("#pattern"), ctrls = $("#controls"), desc = $("#patternDesc");
+
+for(const k in PATTERNS){const o=document.createElement("option");o.value=k;o.textContent=PATTERNS[k].name;sel.appendChild(o);}
+sel.value = current;
+
+function buildSwatches(){
+  const wrap=$("#swatches");wrap.innerHTML="";
+  PALETTE.forEach(col=>{const d=document.createElement("div");
+    d.className="swatch"+(col===color?" sel":"");d.style.background=col;
+    d.onclick=()=>{color=col;buildSwatches();redraw();};wrap.appendChild(d);});
+}
+
+function buildControls(){
+  ctrls.innerHTML="";
+  desc.textContent=PATTERNS[current].desc;
+  PATTERNS[current].params.forEach(p=>{
+    const v=state[current][p.key];
+    const lab=document.createElement("label");lab.className="field";
+    lab.innerHTML=`<div class="row"><span class="name">${p.label}</span>
+      <input type="number" min="${p.min}" max="${p.max}" step="${p.step}" value="${v}"></div>
+      <input type="range" min="${p.min}" max="${p.max}" step="${p.step}" value="${v}">`;
+    const num=lab.querySelector('input[type=number]'), rng=lab.querySelector('input[type=range]');
+    const set=val=>{let n=parseFloat(val);if(isNaN(n))return;if(p.int)n=Math.round(n);
+      n=Math.min(p.max,Math.max(p.min,n));state[current][p.key]=n;num.value=n;rng.value=n;redraw();};
+    num.addEventListener('input',e=>set(e.target.value));
+    rng.addEventListener('input',e=>set(e.target.value));
+    ctrls.appendChild(lab);
+  });
+}
+
+sel.addEventListener('change',()=>{current=sel.value;buildControls();redraw();});
+
+/* ----------------------------------------------------------------------------
+   Geometry helpers
+---------------------------------------------------------------------------- */
+function run(){const t=new Turtle();PATTERNS[current].draw(t,state[current]);return t.seg;}
+
+function bbox(seg){let a=1e9,b=1e9,c=-1e9,d=-1e9;
+  for(const s of seg){a=Math.min(a,s[0],s[2]);b=Math.min(b,s[1],s[3]);
+    c=Math.max(c,s[0],s[2]);d=Math.max(d,s[1],s[3]);}
+  if(a>c){a=b=0;c=d=1;}return{minX:a,minY:b,maxX:c,maxY:d,w:c-a,h:d-b};}
+
+function pathLength(seg){let L=0;for(const s of seg)L+=Math.hypot(s[2]-s[0],s[3]-s[1]);return L;}
+
+/* ----------------------------------------------------------------------------
+   Canvas render (with optional animation reveal)
+---------------------------------------------------------------------------- */
+const cv=$("#c"), ctx=cv.getContext("2d");
+function fitCanvas(){const size=Math.min(cv.parentElement.clientWidth-48,cv.parentElement.clientHeight-48,1100);
+  const dpr=window.devicePixelRatio||1;cv.style.width=cv.style.height=size+"px";
+  cv.width=cv.height=Math.round(size*dpr);ctx.setTransform(dpr,0,0,dpr,0,0);return size;}
+
+let lastSeg=[];
+function redraw(reveal){
+  const seg=lastSeg=run();
+  const size=fitCanvas(), pad=28;
+  const bb=bbox(seg), sc=Math.min((size-2*pad)/bb.w,(size-2*pad)/bb.h);
+  const ox=(size-bb.w*sc)/2-bb.minX*sc, oy=(size-bb.h*sc)/2-bb.minY*sc;
+  ctx.clearRect(0,0,size,size);
+  ctx.lineWidth=Math.max(0.6,1.1/Math.sqrt(sc>0?sc:1)*Math.sqrt(sc));ctx.lineWidth=1.1;
+  ctx.lineCap="round";ctx.lineJoin="round";ctx.strokeStyle=color;
+  const n = reveal==null?seg.length:reveal;
+  ctx.beginPath();
+  for(let i=0;i<n;i++){const s=seg[i];
+    ctx.moveTo(s[0]*sc+ox,s[1]*sc+oy);ctx.lineTo(s[2]*sc+ox,s[3]*sc+oy);}
+  ctx.stroke();
+  $("#statSeg").textContent=seg.length.toLocaleString();
+  $("#statLen").textContent=Math.round(pathLength(seg)).toLocaleString()+" steps";
+}
+
+let anim=null;
+function animate(){
+  if(anim){cancelAnimationFrame(anim);anim=null;$("#animate").textContent="▶ Animate draw";redraw();return;}
+  $("#animate").textContent="⏹ Stop";
+  const total=lastSeg.length||run().length;let shown=0;
+  const per=Math.max(1,Math.round(total/120));
+  const tick=()=>{shown+=per;redraw(Math.min(shown,total));
+    if(shown<total)anim=requestAnimationFrame(tick);
+    else{anim=null;$("#animate").textContent="▶ Animate draw";}};
+  tick();
+}
+
+/* ----------------------------------------------------------------------------
+   Export
+---------------------------------------------------------------------------- */
+function svgString(){
+  const seg=run(),bb=bbox(seg),pad=10;
+  let d="",px=null,py=null;
+  for(const s of seg){
+    if(px===null||Math.abs(s[0]-px)>1e-6||Math.abs(s[1]-py)>1e-6)d+=`M${s[0].toFixed(2)} ${s[1].toFixed(2)} `;
+    d+=`L${s[2].toFixed(2)} ${s[3].toFixed(2)} `;px=s[2];py=s[3];}
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${(bb.minX-pad).toFixed(2)} ${(bb.minY-pad).toFixed(2)} ${(bb.w+2*pad).toFixed(2)} ${(bb.h+2*pad).toFixed(2)}">
+<path d="${d.trim()}" fill="none" stroke="${color}" stroke-width="1" stroke-linejoin="round" stroke-linecap="round"/>
+</svg>`;
+}
+function download(name,data,type){const b=new Blob([data],{type});const u=URL.createObjectURL(b);
+  const a=document.createElement("a");a.href=u;a.download=name;a.click();URL.revokeObjectURL(u);}
+
+$("#saveSvg").onclick=()=>download(current+".svg",svgString(),"image/svg+xml");
+$("#savePng").onclick=()=>{redraw();cv.toBlob(b=>download(current+".png",b,"image/png"));};
+
+/* ----------------------------------------------------------------------------
+   Buttons
+---------------------------------------------------------------------------- */
+$("#animate").onclick=animate;
+$("#reset").onclick=()=>{PATTERNS[current].params.forEach(p=>state[current][p.key]=p.value);buildControls();redraw();};
+$("#surprise").onclick=()=>{PATTERNS[current].params.forEach(p=>{
+  const r=p.min+Math.random()*(p.max-p.min);state[current][p.key]=p.int?Math.round(r):Math.round(r*10)/10;});
+  buildControls();redraw();};
+
+window.addEventListener('resize',()=>redraw());
+
+buildSwatches();buildControls();redraw();
+</script>
+</body>
+</html>
